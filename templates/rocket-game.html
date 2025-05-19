@@ -1,0 +1,494 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Virtual Mouse with Hand Tracking</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            padding: 0;
+            display: flex;
+            flex-direction: column;
+            min-height: 100vh;
+            background-color: #f0f0f0;
+        }
+        
+        .container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+            flex: 1;
+        }
+        
+        h1 {
+            color: #333;
+            margin-bottom: 20px;
+        }
+        
+        .video-container {
+            position: relative;
+            margin-bottom: 20px;
+            border: 2px solid #333;
+            border-radius: 10px;
+            overflow: hidden;
+            max-width: 640px;
+            width: 100%;
+        }
+        
+        #video {
+            width: 100%;
+            display: block;
+        }
+        
+        #canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+        }
+        
+        .playground {
+            width: 100%;
+            max-width: 640px;
+            height: 300px;
+            border: 2px solid #333;
+            border-radius: 10px;
+            background-color: white;
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .virtual-mouse {
+            position: absolute;
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            background-color: #ff4757;
+            transform: translate(-50%, -50%);
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.3);
+            transition: background-color 0.2s;
+            z-index: 2;
+        }
+        
+        .virtual-mouse.grabbing {
+            background-color: #5352ed;
+            transform: translate(-50%, -50%) scale(1.2);
+        }
+        
+        .draggable {
+            position: absolute;
+            width: 60px;
+            height: 60px;
+            border-radius: 8px;
+            background-color: #2ed573;
+            cursor: grab;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-weight: bold;
+            user-select: none;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+        
+        .status {
+            margin-top: 20px;
+            padding: 10px;
+            background-color: #dfe6e9;
+            border-radius: 5px;
+            width: 100%;
+            max-width: 640px;
+        }
+        
+        .controls {
+            display: flex;
+            gap: 10px;
+            margin-top: 20px;
+        }
+        
+        button {
+            padding: 10px 15px;
+            border: none;
+            border-radius: 5px;
+            background-color: #2d98da;
+            color: white;
+            cursor: pointer;
+            font-size: 16px;
+            transition: background-color 0.2s;
+        }
+        
+        button:hover {
+            background-color: #45aaf2;
+        }
+        
+        button.danger {
+            background-color: #ee5253;
+        }
+        
+        button.danger:hover {
+            background-color: #ff6b6b;
+        }
+        
+        .stats {
+            display: flex;
+            gap: 20px;
+            margin-top: 10px;
+            font-size: 14px;
+            color: #555;
+        }
+        
+        .stat-item {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+        
+        .indicator {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background-color: #ff5252;
+        }
+        
+        .indicator.active {
+            background-color: #2ed573;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Virtual Mouse with Hand Tracking</h1>
+        
+        <div class="video-container">
+            <video id="video" autoplay playsinline></video>
+            <canvas id="canvas"></canvas>
+        </div>
+        
+        <div class="playground" id="playground">
+            <div class="virtual-mouse" id="virtual-mouse"></div>
+            <div class="draggable" id="draggable-1" style="top: 50px; left: 50px;">Box 1</div>
+            <div class="draggable" id="draggable-2" style="top: 50px; left: 200px;">Box 2</div>
+            <div class="draggable" id="draggable-3" style="top: 150px; left: 120px;">Box 3</div>
+        </div>
+        
+        <div class="stats">
+            <div class="stat-item">
+                <div id="hand-indicator" class="indicator"></div>
+                <span>Hand Detected</span>
+            </div>
+            <div class="stat-item">
+                <div id="grabbing-indicator" class="indicator"></div>
+                <span>Grabbing</span>
+            </div>
+            <div id="fps-counter">FPS: 0</div>
+            <div id="processing-time">Processing: 0ms</div>
+        </div>
+        
+        <div class="status" id="status">Status: Initializing...</div>
+        
+        <div class="controls">
+            <button id="start-button">Start Camera</button>
+            <button id="stop-button" disabled>Stop Camera</button>
+            <button id="toggle-debug" class="danger">Toggle Debug View</button>
+        </div>
+    </div>
+    
+    <script>
+        // DOM Elements
+        const video = document.getElementById('video');
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        const playground = document.getElementById('playground');
+        const virtualMouse = document.getElementById('virtual-mouse');
+        const status = document.getElementById('status');
+        const startButton = document.getElementById('start-button');
+        const stopButton = document.getElementById('stop-button');
+        const toggleDebugButton = document.getElementById('toggle-debug');
+        const handIndicator = document.getElementById('hand-indicator');
+        const grabbingIndicator = document.getElementById('grabbing-indicator');
+        const fpsCounter = document.getElementById('fps-counter');
+        const processingTimeElement = document.getElementById('processing-time');
+        const draggables = document.querySelectorAll('.draggable');
+        
+        // Variables
+        let stream = null;
+        let websocket = null;
+        let isRunning = false;
+        let showDebug = false;
+        let lastFrameTime = 0;
+        let frameCount = 0;
+        let fpsUpdateInterval = null;
+        let selectedElement = null;
+        let offsetX = 0;
+        let offsetY = 0;
+        let lastX = 0;
+        let lastY = 0;
+        
+        // Configure WebSocket URL
+        const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const wsUrl = `${wsProtocol}//${window.location.host}/ws`;
+        
+        // Media constraints
+        const constraints = {
+            video: {
+                width: { ideal: 640 },
+                height: { ideal: 480 },
+                facingMode: 'user'
+            }
+        };
+        
+        // Initialize application
+        function init() {
+            // Set up event listeners
+            startButton.addEventListener('click', startCamera);
+            stopButton.addEventListener('click', stopCamera);
+            toggleDebugButton.addEventListener('click', toggleDebug);
+            
+            // Make canvas match video dimensions
+            canvas.width = video.clientWidth;
+            canvas.height = video.clientHeight;
+            
+            // Start FPS counter
+            fpsUpdateInterval = setInterval(updateFPS, 1000);
+            
+            // Set status
+            status.textContent = 'Status: Ready. Click "Start Camera" to begin.';
+        }
+        
+        // Start camera and processing
+        async function startCamera() {
+            try {
+                // Request camera access
+                stream = await navigator.mediaDevices.getUserMedia(constraints);
+                video.srcObject = stream;
+                
+                // Set up video event listeners
+                video.addEventListener('loadedmetadata', () => {
+                    canvas.width = video.videoWidth;
+                    canvas.height = video.videoHeight;
+                });
+                
+                // Connect WebSocket
+                connectWebSocket();
+                
+                // Update UI
+                startButton.disabled = true;
+                stopButton.disabled = false;
+                isRunning = true;
+                
+                // Start sending frames
+                requestAnimationFrame(sendFrame);
+                
+                status.textContent = 'Status: Camera started and processing...';
+            } catch (error) {
+                console.error('Error starting camera:', error);
+                status.textContent = `Status: Error - ${error.message}. Try using HTTPS for camera access.`;
+                
+                // If error is related to camera permissions, suggest HTTPS
+                if (error.name === 'NotAllowedError' || error.name === 'PermissionDeniedError') {
+                    window.location.href = '/camera-error';
+                }
+            }
+        }
+        
+        // Stop camera and processing
+        function stopCamera() {
+            if (stream) {
+                stream.getTracks().forEach(track => track.stop());
+                video.srcObject = null;
+            }
+            
+            if (websocket) {
+                websocket.close();
+                websocket = null;
+            }
+            
+            // Update UI
+            startButton.disabled = false;
+            stopButton.disabled = true;
+            isRunning = false;
+            
+            // Reset indicators
+            handIndicator.classList.remove('active');
+            grabbingIndicator.classList.remove('active');
+            virtualMouse.classList.remove('grabbing');
+            
+            status.textContent = 'Status: Camera stopped.';
+        }
+        
+        // Connect to WebSocket
+        function connectWebSocket() {
+            websocket = new WebSocket(wsUrl);
+            
+            websocket.onopen = () => {
+                console.log('WebSocket connected');
+                status.textContent = 'Status: WebSocket connected. Processing video...';
+            };
+            
+            websocket.onclose = () => {
+                console.log('WebSocket closed');
+                status.textContent = 'Status: WebSocket disconnected.';
+                
+                // Try to reconnect if still running
+                if (isRunning) {
+                    setTimeout(connectWebSocket, 1000);
+                }
+            };
+            
+            websocket.onerror = (error) => {
+                console.error('WebSocket error:', error);
+                status.textContent = 'Status: WebSocket error. Check console for details.';
+            };
+            
+            websocket.onmessage = (event) => {
+                processHandPosition(event.data);
+            };
+        }
+        
+        // Send video frame to server
+        function sendFrame(timestamp) {
+            if (!isRunning) return;
+            
+            // Calculate FPS
+            const elapsed = timestamp - lastFrameTime;
+            if (elapsed > 30) { // Limit to about 30fps to reduce load
+                lastFrameTime = timestamp;
+                frameCount++;
+                
+                // Draw video to canvas
+                ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+                
+                // Debug mode: draw flipped video to help with orientation
+                if (showDebug) {
+                    ctx.save();
+                    ctx.scale(-1, 1);
+                    ctx.drawImage(video, -canvas.width, 0, canvas.width, canvas.height);
+                    ctx.restore();
+                }
+                
+                // Convert canvas to base64 image
+                const imageData = canvas.toDataURL('image/jpeg', 0.7);
+                
+                // Send to server if WebSocket is connected
+                if (websocket && websocket.readyState === WebSocket.OPEN) {
+                    websocket.send(JSON.stringify({ frame: imageData }));
+                }
+            }
+            
+            // Continue the loop
+            requestAnimationFrame(sendFrame);
+        }
+        
+        // Process hand position data from server
+        function processHandPosition(data) {
+            try {
+                const result = JSON.parse(data);
+                
+                // Update processing time display
+                if (result.avg_processing_time) {
+                    processingTimeElement.textContent = `Processing: ${result.avg_processing_time.toFixed(1)}ms`;
+                }
+                
+                // Update hand detected indicator
+                handIndicator.classList.toggle('active', result.hand_detected);
+                
+                if (result.hand_detected) {
+                    // Update grabbing indicator
+                    grabbingIndicator.classList.toggle('active', result.grabbing);
+                    virtualMouse.classList.toggle('grabbing', result.grabbing);
+                    
+                    // Get playground dimensions
+                    const playgroundRect = playground.getBoundingClientRect();
+                    
+                    // Convert normalized coordinates to playground coordinates (flipped X for mirror effect)
+                    const mouseX = playgroundRect.width * (1 - result.x);
+                    const mouseY = playgroundRect.height * result.y;
+                    
+                    // Update virtual mouse position
+                    virtualMouse.style.left = `${mouseX}px`;
+                    virtualMouse.style.top = `${mouseY}px`;
+                    
+                    // Handle dragging functionality
+                    if (result.grabbing) {
+                        if (!selectedElement) {
+                            // Check if mouse is over a draggable element
+                            draggables.forEach(draggable => {
+                                const rect = draggable.getBoundingClientRect();
+                                const relativeRect = {
+                                    left: rect.left - playgroundRect.left,
+                                    top: rect.top - playgroundRect.top,
+                                    right: rect.right - playgroundRect.left,
+                                    bottom: rect.bottom - playgroundRect.top,
+                                    width: rect.width,
+                                    height: rect.height
+                                };
+                                
+                                if (mouseX >= relativeRect.left && mouseX <= relativeRect.right &&
+                                    mouseY >= relativeRect.top && mouseY <= relativeRect.bottom) {
+                                    selectedElement = draggable;
+                                    offsetX = mouseX - relativeRect.left;
+                                    offsetY = mouseY - relativeRect.top;
+                                    draggable.style.zIndex = '10';
+                                }
+                            });
+                        } else {
+                            // Move the selected element
+                            const newX = mouseX - offsetX;
+                            const newY = mouseY - offsetY;
+                            
+                            // Constrain to playground bounds
+                            const boundedX = Math.max(0, Math.min(playgroundRect.width - selectedElement.offsetWidth, newX));
+                            const boundedY = Math.max(0, Math.min(playgroundRect.height - selectedElement.offsetHeight, newY));
+                            
+                            selectedElement.style.left = `${boundedX}px`;
+                            selectedElement.style.top = `${boundedY}px`;
+                        }
+                    } else if (selectedElement) {
+                        // Release the selected element
+                        selectedElement.style.zIndex = '1';
+                        selectedElement = null;
+                    }
+                    
+                    // Store last position
+                    lastX = mouseX;
+                    lastY = mouseY;
+                } else {
+                    // Reset dragging if hand is lost
+                    if (selectedElement) {
+                        selectedElement.style.zIndex = '1';
+                        selectedElement = null;
+                    }
+                }
+            } catch (error) {
+                console.error('Error processing hand position:', error);
+            }
+        }
+        
+        // Toggle debug view
+        function toggleDebug() {
+            showDebug = !showDebug;
+            toggleDebugButton.textContent = showDebug ? 'Hide Debug View' : 'Show Debug View';
+        }
+        
+        // Update FPS counter
+        function updateFPS() {
+            fpsCounter.textContent = `FPS: ${frameCount}`;
+            frameCount = 0;
+        }
+        
+        // Handle window resize
+        window.addEventListener('resize', () => {
+            canvas.width = video.clientWidth;
+            canvas.height = video.clientHeight;
+        });
+        
+        // Initialize when page is loaded
+        window.addEventListener('load', init);
+    </script>
+</body>
+</html>
